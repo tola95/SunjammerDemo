@@ -11,37 +11,34 @@
 #define SPI_MOSI   PIN_B2 //Master Out Slave In
 #define SPI_MISO   PIN_B3 //Master In Slave Out
 
-#define VCC5V 2
-#define REF5V 3
+#define VCC5V 2 //VCC Voltage
+#define REF5V 3 //Ref Voltage
 
-#define OB_RANGE PIN_F0
-#define IB_RANGE PIN_F1
+#define OB_RANGE PIN_F0  //Outboard Range
+#define IB_RANGE PIN_F1  //Inboard Range
 
 //Constants
 const int baudRate = 9600;
-const long clockSpeed = 3200000;
-const int NO_OF_INPUT_CHANNELS = 8;
+const long clockSpeed = 3200000; //ADC Maximum speed
+const int NO_OF_INPUT_CHANNELS = 8; 
 const int bufferCapacity = 256;
 
 //Global Variables
-int counter = 0; //Number times loop is executed
-int input;
-bool telementary = true;
-bool graphicalDisplay = false;
-int vectorCount = 0;
+int input; //Variable to receive inputs during main loop
+bool telementary = true; //Telementary display in main loop
+bool graphicalDisplay = false; //Graphical display in main loop
+bool voltageDisplay = false;
+long int vectorCount = 0; //Number of vectors produced from start
 //pthread_mutex_t buffer_lock =PTHREAD_MUTEX_INITIALIZER;
-
-// Status values
-int mode = 1;
-int packet_count;
-byte command_count;
-unsigned int vcc_5v;
-unsigned int ref_5v;
+String mode; // Data mode 
+long previousMillis = 0;
+static int topicCount = 1;
+unsigned long samplingInterval; 
 
 //Struct representing a vector
 struct vector
 {
-  int id;           //Id of this vector
+  int id; //Id of this vector
   unsigned int obx; //Outboard x coordinate
   unsigned int oby; //Outboard y coordinate
   unsigned int obz; //Outboard z coordinate
@@ -60,28 +57,34 @@ struct circular_buffer
     int lock; // To prevent race conditions when reading or writing from the buffer
 };
 
-//Circular buffer that will be used
+//Circular buffer that will be used in the loop
 struct circular_buffer buf;
 
 void setup() {
   
   Serial.begin(baudRate);
   Serial.flush();
-  Serial.println("  -------------------------------------- ");
-  Serial.println("  |  Sunjammer MAGIC Flight Software    |");
-  Serial.println("  |  Version 0.0.1                      |");
-  Serial.println("  |  2015-08-03                         |");
-  Serial.println("  |  (C) Space Magnetometer Laboratory  |");
-  Serial.println("  |  Imperial College London            |");
-  Serial.println("  ---------------------------------------");
-  Serial.println("                Commands              ");
-  Serial.println("           r - Read from buffer       ");
-  Serial.println("           k - Read hosekeeping data  ");
-  Serial.println("           h - Help  ");
-  Serial.println("           o - Telementary on  ");
-  Serial.println("           f - Telementary off ");
-  Serial.println("           g - Graphical Telementary on  ");
-  Serial.println("           n - Graphical Telementary off ");
+  Serial.println("  -------------------------------------------");
+  Serial.println("  |  Sunjammer MAGIC Flight Software Demo   |");
+  Serial.println("  |  Version 0.0.1                          |");
+  Serial.println("  |  2015-08-03                             |");
+  Serial.println("  |  (C) Space Magnetometer Laboratory      |");
+  Serial.println("  |  Omotola Babasola                       |");
+  Serial.println("  |  Imperial College London                |");
+  Serial.println("  -------------------------------------------");
+  Serial.println("  -------------------------------------------");
+  Serial.println("  -------------------------------------------");
+  Serial.println("  |              Commands                   |");
+  Serial.println("  |         r - Read from buffer            |");
+  Serial.println("  |         k - Read hosekeeping data       |");
+  Serial.println("  |         h - Help                        |");
+  Serial.println("  |         o - Telementary on              |");
+  Serial.println("  |         f - Telementary off             |");
+  Serial.println("  |         g - Graphical Telementary on    |");
+  Serial.println("  |         n - Normal Telementary on       |");
+  Serial.println("  -------------------------------------------");
+  Serial.println("  -------------------------------------------");
+  Serial.println("  -------------------------------------------");
 
   //Initialise the necessary pins
   pinMode(SPI_SS, OUTPUT);
@@ -93,42 +96,71 @@ void setup() {
   SPI.begin();
 }
 
-void loop() {
-  buffer_write(readVector());
-  
+void loop() { 
+  if (topicCount > 0) {
+    Serial.println(".............Select a mode to start...............");
+    Serial.println("    0 - Normal Data Mode    1 - Raw Data Mode     ");
+    topicCount--;
+    
+  } 
+
+  if (samplingInterval == 0) {
   input = Serial.read();
-  switch (input) {
-    case ((int) 'r') :
-      buffer_read();
-      telementary = false;
-      Serial.println(" Press o to turn telementary back on ");
-      break;
-    case ((int) 'k') :
-      showHousekeeping();
-      telementary = false;
-      Serial.println(" Press o to turn telementary back on ");
-      break;
-    case ((int) 'h') :
-      help();
-      telementary = false;
-      Serial.println(" Press o to turn telementary back on ");
-      break;
-    case ((int) 'o') :
-      telementary = true;
-      break;
-    case ((int) 'f') :
-      telementary = false;
-      break;
-    case ((int) 'g') :
-      graphicalDisplay = true;
-      break;
-    case ((int) 'n') :
-      graphicalDisplay = false;
-      break;
-    default : ;
+      switch (input) {
+        case ((int) '1') : samplingInterval = 1000/16; mode = "Raw Data Mode"; break;
+        case ((int) '0') : samplingInterval = 60000; mode = "Normal Data Mode"; break;
+        default: ;
+      }
   }
+   
+  if (samplingInterval != 0) { 
+
+    unsigned long currentMillis = millis();
   
-  delay(1000/16); //Dalay for 1/16 of a second
+    if (currentMillis - previousMillis > samplingInterval) {
+      buffer_write(readVector()); //Write a new vector to the buffer
+      previousMillis = currentMillis;  
+    }
+  
+    input = Serial.read(); 
+  
+    switch (input) {
+      case ((int) 'r') : //buffer (R)ead
+        buffer_read();
+        telementary = false;
+        Serial.println(" Press o to turn telementary back on ");
+        break;
+      case ((int) 'k') : //house(K)eeping
+        showHousekeeping();
+        telementary = false;
+        Serial.println(" Press o to turn telementary back on ");
+        break;
+      case ((int) 'h') : //(H)elp
+        help();
+        telementary = false;
+        Serial.println(" Press o to turn telementary back on ");
+        break;
+      case ((int) 'o') : //telementary (O)n
+        telementary = true;
+        break;
+      case ((int) 'f') : //telementary o(F)f
+        telementary = false;
+        break;
+      case ((int) 'g') : //(G)raphical display on
+        graphicalDisplay = true;
+        voltageDisplay = false;
+        break;
+      case ((int) 'n') : //(N)ormal display on
+        graphicalDisplay = false;
+        voltageDisplay = false;
+        break;
+      case ((int) 'v') : //(N)ormal display on
+        voltageDisplay = true;
+        graphicalDisplay = false;
+        break;
+      default : ;
+    } 
+  } 
 }
 
 struct vector readVector(){
@@ -159,6 +191,8 @@ struct vector readVector(){
   if (telementary) {
     if (graphicalDisplay) {
       printGraphicalVector(vec);
+    } else if (voltageDisplay) {
+      printVoltages(vec);
     } else {
       printVector(vec);
     }
@@ -168,6 +202,7 @@ struct vector readVector(){
   return vec;
 }
 
+//Read value at a particular input channel on ADC
 unsigned int getSPIValue(int inputChannel) {
   
   /* The ADC 128S022 uses bits 5,4 and 3 to select channels hence the '<<3' convention
@@ -185,22 +220,31 @@ unsigned int getSPIValue(int inputChannel) {
   return coordinate;
 }
 
+//Housekeeping data
 void showHousekeeping() {
-
-  Serial.println("         STATUS");
+  Serial.println("  -------------------------------------------");
+  Serial.println("  -------------------------------------------");
+  Serial.println("  -------------------------------------------");
+  Serial.println("             STATUS");
   Serial.print("    Time (ms)      : "); Serial.println(millis());
   Serial.print("    Mode           : "); Serial.println(mode);
   Serial.print("    Outboard Range : "); 
   if (analogRead(OB_RANGE)==0) {Serial.println("LOW");} else {Serial.println("HIGH");}
   Serial.print("    Inboard Range  : "); 
   if (analogRead(IB_RANGE)==0) {Serial.println("LOW");} else {Serial.println("HIGH");}
-  Serial.print("    Packet Count   : "); Serial.println(packet_count);
+  Serial.print("    Packet Count   : "); Serial.println(vectorCount);
   Serial.print("    VCC 5V         : "); Serial.println(analogRead(VCC5V));
   Serial.print("    REF 5V         : "); Serial.println(analogRead(REF5V));
+  Serial.println("  -------------------------------------------");
+  Serial.println("  -------------------------------------------");
+  Serial.println("  -------------------------------------------");
 
 }
 
 void help() {
+  Serial.println("  -------------------------------------------");
+  Serial.println("  -------------------------------------------");
+  Serial.println("  -------------------------------------------");
   Serial.println("                Commands              ");
   Serial.println("           r - Read from buffer       ");
   Serial.println("           k - Read hosekeeping data  ");
@@ -208,7 +252,10 @@ void help() {
   Serial.println("           o - Telementary on  ");
   Serial.println("           f - Telementary off ");
   Serial.println("           g - Graphical Telementary on  ");
-  Serial.println("           n - Graphical Telementary off ");
+  Serial.println("           n - Normal Telementary on ");
+  Serial.println("  -------------------------------------------");
+  Serial.println("  -------------------------------------------");
+  Serial.println("  -------------------------------------------");
 }
 
 ///////////////////////////////////////
@@ -219,7 +266,7 @@ void buffer_write(struct vector vec) {
 
   //pthread_mutex_lock(&buffer_lock);
   acquire_buffer_lock();
-  if (buf.count < bufferCapacity) {
+  if (buf.count >=0 && buf.count < bufferCapacity) {
     for (int i = buf.count -1; i>=0; i--) {
       buf.storage[i+1] = buf.storage[i];
     }
@@ -232,21 +279,27 @@ void buffer_write(struct vector vec) {
     buf.storage[0] = vec;
   } else {
     //This should never be reached
-    Serial.println("Buffer count error. Capacity Exceeded");
+    Serial.println("Buffer write error: Buffer over capacity or negative valued");
   }
   release_buffer_lock();
   //pthread_mutex_unlock(&buffer_lock);
 }
 
-struct vector buffer_read () {
+void buffer_read () {
   //pthread_mutex_lock(&buffer_lock);
-  acquire_buffer_lock();
-  struct vector vec = buf.storage[buf.count-1];
-  buf.count--;
-  release_buffer_lock();
-  //pthread_mutex_unlock(&buffer_lock);
-  printVector(vec);
-  return vec;
+  if (buf.count == 0) {
+    Serial.println("Buffer currently empty");
+  } else if (buf.count > 0 && buf.count <= bufferCapacity) {
+    acquire_buffer_lock();
+    struct vector vec = buf.storage[buf.count-1];
+    buf.count--;
+    release_buffer_lock();
+    //pthread_mutex_unlock(&buffer_lock);
+    printVector(vec);
+    //return vec;
+  } else {
+    Serial.println("Buffer read error: Buffer over capacity or negative valued");
+  }
 }
 
 //Spin locks protecting buffer
@@ -260,10 +313,11 @@ void release_buffer_lock() {
   buf.lock = 0;
 }
 
-////////////////////////////////////////////////
-////////////// PRINTING METHODS ////////////////
-////////////////////////////////////////////////
+/////////////////////////////////////////////////
+////////////// DATA DEBUG MODES /////////////////
+/////////////////////////////////////////////////
 
+//Graphical
 void printGraphicalVector(struct vector vec) {
   Serial.print(vec.id);
   Serial.print("   ");
@@ -297,10 +351,36 @@ String graphical(unsigned int coord) {
   return str;
 }
 
-//Print the vector to Serial Monitor
+//Raw bits
 void printVector(struct vector vec) {
   char tbs[64];
-  sprintf(tbs, "%X)  %03X %03X %03X %03X   %03X %03X %03X %03X", 
+  sprintf(tbs, "%i)  %03X %03X %03X %03X   %03X %03X %03X %03X", 
           vec.id,vec.obx,vec.oby,vec.obz,vec.obt,vec.ibx,vec.iby,vec.ibz,vec.ibt);
   Serial.println(tbs);
 }
+
+//Display Voltages
+void printVoltages(struct vector vec) {
+  Serial.print(vec.id);
+  Serial.print("   ");
+  Serial.print(voltage(vec.obx), 4);
+  Serial.print(" ");
+  Serial.print(voltage(vec.oby), 4);
+  Serial.print(" ");
+  Serial.print(voltage(vec.obz), 4);
+  Serial.print(" ");
+  Serial.print(voltage(vec.obt), 4);
+  Serial.print(" ");
+  Serial.print(voltage(vec.ibx), 4);
+  Serial.print(" ");
+  Serial.print(voltage(vec.iby), 4);
+  Serial.print(" ");
+  Serial.print(voltage(vec.ibz), 4);
+  Serial.print(" ");
+  Serial.println(voltage(vec.ibt), 4);
+}
+
+double voltage (unsigned int coord) {
+  return ((5 / 4096) * (int) coord);
+}
+
