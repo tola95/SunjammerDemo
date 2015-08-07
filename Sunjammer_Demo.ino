@@ -28,7 +28,6 @@ int input; //Variable to receive inputs during main loop
 bool telementary = true; //Telementary display in main loop
 bool graphicalDisplay = false; //Graphical display in main loop
 bool voltageDisplay = false;
-long int vectorCount = 0; //Number of vectors produced from start
 //pthread_mutex_t buffer_lock =PTHREAD_MUTEX_INITIALIZER;
 String mode; // Data mode 
 long previousMillis = 0;
@@ -38,7 +37,6 @@ unsigned long samplingInterval;
 //Struct representing a vector
 struct vector
 {
-  int id; //Id of this vector
   unsigned int obx; //Outboard x coordinate
   unsigned int oby; //Outboard y coordinate
   unsigned int obz; //Outboard z coordinate
@@ -55,6 +53,8 @@ struct circular_buffer
     struct vector *storage = new struct vector [bufferCapacity];  // the storage of the buffer is an array of 16 vectors
     int count;  // number of items in the buffer
     int lock; // To prevent race conditions when reading or writing from the buffer
+    int write_ptr; //current write position in the buffer
+    int read_ptr; //current write position in the buffer
 };
 
 //Circular buffer that will be used in the loop
@@ -159,8 +159,9 @@ void loop() {
         graphicalDisplay = false;
         break;
       default : ;
-    } 
-  } 
+    }  
+  }
+  
 }
 
 struct vector readVector(){
@@ -181,7 +182,6 @@ struct vector readVector(){
   vec.iby = getSPIValue(6);
   vec.ibz = getSPIValue(7);
   vec.ibt = getSPIValue(0);
-  vec.id = vectorCount;
 
   //Disable SPI reading
   digitalWrite(SPI_SS,HIGH);
@@ -197,8 +197,6 @@ struct vector readVector(){
       printVector(vec);
     }
   }
-
-  vectorCount++;
   return vec;
 }
 
@@ -232,9 +230,10 @@ void showHousekeeping() {
   if (analogRead(OB_RANGE)==0) {Serial.println("LOW");} else {Serial.println("HIGH");}
   Serial.print("    Inboard Range  : "); 
   if (analogRead(IB_RANGE)==0) {Serial.println("LOW");} else {Serial.println("HIGH");}
-  Serial.print("    Packet Count   : "); Serial.println(vectorCount);
   Serial.print("    VCC 5V         : "); Serial.println(analogRead(VCC5V));
   Serial.print("    REF 5V         : "); Serial.println(analogRead(REF5V));
+  Serial.print("    Read Position  : "); Serial.println(buf.read_ptr);
+  Serial.print("    Write Position : "); Serial.println(buf.write_ptr);
   Serial.println("  -------------------------------------------");
   Serial.println("  -------------------------------------------");
   Serial.println("  -------------------------------------------");
@@ -266,21 +265,18 @@ void buffer_write(struct vector vec) {
 
   //pthread_mutex_lock(&buffer_lock);
   acquire_buffer_lock();
-  if (buf.count >=0 && buf.count < bufferCapacity) {
-    for (int i = buf.count -1; i>=0; i--) {
-      buf.storage[i+1] = buf.storage[i];
-    }
+  buf.storage[buf.write_ptr] = vec;
+  buf.write_ptr = (buf.write_ptr + 1)%bufferCapacity;
+  if (buf.count < bufferCapacity) {
     buf.count++;
-    buf.storage[0] = vec;
-  } else if (buf.count == bufferCapacity) {
-    for (int i = (bufferCapacity - 2); i>=0; i--) {
-      buf.storage[i+1] = buf.storage[i];
-    }
-    buf.storage[0] = vec;
-  } else {
-    //This should never be reached
-    Serial.println("Buffer write error: Buffer over capacity or negative valued");
   }
+  if (buf.count == bufferCapacity) {
+    buf.read_ptr = buf.write_ptr;
+  }
+  if (buf.count > bufferCapacity) {
+    Serial.println("Write error, buffer over capacity");
+  }
+  
   release_buffer_lock();
   //pthread_mutex_unlock(&buffer_lock);
 }
@@ -291,7 +287,8 @@ void buffer_read () {
     Serial.println("Buffer currently empty");
   } else if (buf.count > 0 && buf.count <= bufferCapacity) {
     acquire_buffer_lock();
-    struct vector vec = buf.storage[buf.count-1];
+    struct vector vec = buf.storage[buf.read_ptr];
+    buf.read_ptr = (buf.read_ptr + 1)%bufferCapacity;
     buf.count--;
     release_buffer_lock();
     //pthread_mutex_unlock(&buffer_lock);
@@ -319,8 +316,6 @@ void release_buffer_lock() {
 
 //Graphical
 void printGraphicalVector(struct vector vec) {
-  Serial.print(vec.id);
-  Serial.print("   ");
   Serial.print(graphical(vec.obx));
   Serial.print(" ");
   Serial.print(graphical(vec.oby));
@@ -354,15 +349,13 @@ String graphical(unsigned int coord) {
 //Raw bits
 void printVector(struct vector vec) {
   char tbs[64];
-  sprintf(tbs, "%i)  %03X %03X %03X %03X   %03X %03X %03X %03X", 
-          vec.id,vec.obx,vec.oby,vec.obz,vec.obt,vec.ibx,vec.iby,vec.ibz,vec.ibt);
+  sprintf(tbs, "%04i %04i %04i %04i   %04i %04i %04i %04i", 
+          vec.obx,vec.oby,vec.obz,vec.obt,vec.ibx,vec.iby,vec.ibz,vec.ibt);
   Serial.println(tbs);
 }
 
 //Display Voltages
 void printVoltages(struct vector vec) {
-  Serial.print(vec.id);
-  Serial.print("   ");
   Serial.print(voltage(vec.obx), 4);
   Serial.print(" ");
   Serial.print(voltage(vec.oby), 4);
@@ -380,7 +373,8 @@ void printVoltages(struct vector vec) {
   Serial.println(voltage(vec.ibt), 4);
 }
 
-double voltage (unsigned int coord) {
-  return ((5 / 4096) * (int) coord);
+double voltage (int coord) {
+  return ((coord / 1024 ) * 5);
+  //return coord;
 }
 
